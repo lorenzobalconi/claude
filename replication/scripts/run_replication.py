@@ -1,6 +1,6 @@
 """Replikation und Erweiterung von Sharbaugh et al. (2018) mit einem Fractional Response Model.
 
-Aufruf:  python scripts/run_replication.py --panel data/panel.csv --boot 499
+Aufruf:  python scripts/run_replication.py --panel data/final/panel_state_year_2001_2015.csv --boot 499
 Optional: --instruments data/raw/instruments.csv  (Spalten state, year und Instrumente für die Steuer)
 Ergebnis: results/replication.md und results/replication_*.csv
 
@@ -22,11 +22,11 @@ from frm_panel import estimators as E  # noqa: E402
 PP, LIN = 25.0, 0.25
 BASE_CONTROLS = ["unemp", "ln_pcpi_real", "sh_age1824", "sh_age2544", "sh_age4564", "sh_female",
                  "sh_black", "sh_hisp", "sh_college", "sh_lowinc"]
-GROUPS = {"Alter 18–24": "18-24", "Alter 25–44": "25-44", "Alter 45–64": "45-64", "Alter 65+": "65+",
+GROUPS = {"Alter 18–24": "age1824", "Alter 25–44": "age2544", "Alter 45–64": "age4564", "Alter 65+": "age65p",
           "Männer": "male", "Frauen": "female",
-          "Einkommen < $25k": "<25k", "Einkommen $25–50k": "25-50k", "Einkommen $50–75k": "50-75k",
-          "Einkommen ≥ $75k": "75k+",
-          "Weiß, nicht hispanisch": "white_nh", "Schwarz, nicht hispanisch": "black_nh", "Hispanisch": "hispanic"}
+          "Einkommen < $25k": "inc_lt25k", "Einkommen $25–50k": "inc_25_50k", "Einkommen $50–75k": "inc_50_75k",
+          "Einkommen ≥ $75k": "inc_ge75k",
+          "Weiß, nicht hispanisch": "white_nh", "Schwarz, nicht hispanisch": "black_nh", "Hispanisch": "hisp"}
 
 
 def controls_for(panel: pd.DataFrame) -> list[str]:
@@ -154,7 +154,7 @@ def group_table(p: pd.DataFrame, B: int) -> pd.DataFrame:
 def main():
     ap = argparse.ArgumentParser()
     root = Path(__file__).resolve().parents[1]
-    ap.add_argument("--panel", default=str(root / "data" / "panel.csv"))
+    ap.add_argument("--panel", default=str(root / "data" / "final" / "panel_state_year_2001_2015.csv"))
     ap.add_argument("--instruments", default=None)
     ap.add_argument("--boot", type=int, default=499)
     ap.add_argument("--out", default=str(root / "results"))

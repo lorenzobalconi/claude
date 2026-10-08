@@ -100,8 +100,8 @@ def test_run_replication_on_synthetic_panel(tmp_path):
     for c in ["unemp", "ln_pcpi_real", "sh_age1824", "sh_age2544", "sh_age4564", "sh_female", "sh_black",
               "sh_hisp", "sh_college", "sh_lowinc", "smokefree"]:
         p[c] = rng.uniform(0, 1, len(p))
-    for g in ["18-24", "25-44", "45-64", "65+", "male", "female", "<25k", "25-50k", "50-75k", "75k+",
-              "white_nh", "black_nh", "hispanic"]:
+    for g in ["age1824", "age2544", "age4564", "age65p", "male", "female", "inc_lt25k", "inc_25_50k",
+              "inc_50_75k", "inc_ge75k", "white_nh", "black_nh", "hisp"]:
         p[f"prev_{g}"] = np.clip(p["prev"] + rng.normal(0, 0.02, len(p)), 0, 1)
         p[f"n_{g}"] = 300
     p["quit"] = rng.uniform(0.4, 0.7, len(p))

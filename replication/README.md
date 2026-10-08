@@ -27,7 +27,7 @@ zur Konsistenz der Schätzer.
 ```bash
 pip install -r requirements.txt
 python scripts/get_data.py          # braucht www.cdc.gov, data.cdc.gov, fred.stlouisfed.org
-python scripts/build_panel.py       # -> data/panel.csv
+python scripts/build_panel.py       # -> data/final/panel_state_year_2001_2015.csv
 python scripts/run_replication.py --boot 499
 # optional mit Instrument(en) für die Steuer: --instruments data/raw/instruments.csv (Spalten state, year, …)
 python scripts/monte_carlo.py --reps 500 --workers 4

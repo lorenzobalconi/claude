@@ -32,6 +32,14 @@ STATES = {1: "AL", 2: "AK", 4: "AZ", 5: "AR", 6: "CA", 8: "CO", 9: "CT", 10: "DE
           45: "SC", 46: "SD", 47: "TN", 48: "TX", 49: "UT", 50: "VT", 51: "VA", 53: "WA", 54: "WV", 55: "WI",
           56: "WY"}
 
+# Teilgruppen -> Stata-taugliche Spaltennamen (prev_<code>, n_<code>)
+GROUP_CODES = {
+    "age_grp": {"18-24": "age1824", "25-44": "age2544", "45-64": "age4564", "65+": "age65p"},
+    "sex": {"male": "male", "female": "female"},
+    "inc_grp": {"<25k": "inc_lt25k", "25-50k": "inc_25_50k", "50-75k": "inc_50_75k", "75k+": "inc_ge75k"},
+    "race_grp": {"white_nh": "white_nh", "black_nh": "black_nh", "hispanic": "hisp"},
+}
+
 BRFSS_VARS = ["_STATE", "_SMOKER2", "_SMOKER3", "_FINALWT", "_LLCPWT", "_AGEG5YR", "INCOME2", "SEX",
               "_RACEGR2", "_RACEGR3", "EDUCA", "STOPSMK2"]
 
@@ -159,13 +167,11 @@ def aggregate(p: pd.DataFrame) -> pd.DataFrame:
     for (fips, year), g in p.groupby(["fips", "year"], sort=True):
         s = g[g["smoker"].notna()]
         r = {"fips": int(fips), "year": int(year), "n": len(s), "prev": _wmean(s["smoker"], s["w"])}
-        for col, levels in [("age_grp", ["18-24", "25-44", "45-64", "65+"]), ("sex", ["male", "female"]),
-                            ("inc_grp", ["<25k", "25-50k", "50-75k", "75k+"]),
-                            ("race_grp", ["white_nh", "black_nh", "hispanic"])]:
-            for lv in levels:
+        for col, levels in GROUP_CODES.items():
+            for lv, code in levels.items():
                 sub = s[s[col] == lv]
-                r[f"prev_{lv}"] = _wmean(sub["smoker"], sub["w"])
-                r[f"n_{lv}"] = len(sub)
+                r[f"prev_{code}"] = _wmean(sub["smoker"], sub["w"])
+                r[f"n_{code}"] = len(sub)
         cur = s[s["smoker"] == 1]
         r["quit"] = _wmean(cur["quit_try"], cur["w"])
         r["n_quit"] = int(cur["quit_try"].notna().sum())
@@ -197,10 +203,15 @@ def read_tax(path: Path) -> pd.DataFrame:
     yc, sc, mc, vc = _col(t, "year"), _col(t, "locationabbr"), _col(t, "submeasuredesc"), _col(t, "data_value")
     sub = t[mc].astype(str).str.strip().str.lower()
     pick = {"tax_nom": sub.str.fullmatch(r"state tax per pack"),
-            "price_nom": sub.str.fullmatch(r"average cost per pack")}
+            "price_nom": sub.str.fullmatch(r"average cost per pack"),
+            "tax_fedstate_nom": sub.str.fullmatch(r"federal and state tax per pack")}
+    optional = {"tax_fedstate_nom"}
     out = None
     for name, m in pick.items():
         if not m.any():
+            if name in optional:
+                print(f"Hinweis: {name} nicht gefunden; Spalte entfällt.", file=sys.stderr)
+                continue
             raise KeyError(f"{name}: keine passende SubMeasureDesc; vorhanden: {sorted(sub.unique())}")
         part = t.loc[m, [sc, yc, vc]].rename(columns={sc: "abbr", yc: "year", vc: name})
         part[name] = pd.to_numeric(part[name].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce")
@@ -276,6 +287,8 @@ def build_panel(raw: Path, out: Path, years=YEARS) -> pd.DataFrame:
     cpi15 = panel.loc[panel["year"] == 2015, "cpi"].iloc[0]
     panel["tax_real"] = panel["tax_nom"] * cpi15 / panel["cpi"]        # in Dollar von 2015
     panel["price_real"] = panel["price_nom"] * cpi15 / panel["cpi"]
+    if "tax_fedstate_nom" in panel:
+        panel["tax_fedstate_real"] = panel["tax_fedstate_nom"] * cpi15 / panel["cpi"]
     panel["ln_pcpi_real"] = np.log(panel["pcpi_nom"] * cpi15 / panel["cpi"])
     panel["prev_pct"] = 100 * panel["prev"]
     panel = panel.rename(columns={"abbr": "state"}).sort_values(["state", "year"]).reset_index(drop=True)
