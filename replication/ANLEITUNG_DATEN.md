@@ -7,8 +7,10 @@ Auswertung in R:
 1. einen **Personendatensatz** mit den BRFSS-Originalvariablen 2001–2015,
 2. den **fertigen Datensatz**: ein Panel aus 50 Staaten und Washington, D.C. für 2001–2015 (765 Zeilen).
 
-Schreib die gesamte Aufbereitung als **R-Skripte**, damit sie reproduzierbar ist. Schätze **keine** Modelle; es
-geht nur um die Daten.
+Schreib die gesamte Aufbereitung als **R-Skripte**. Ein Ergebnis ist ausdrücklich das Transformationsskript
+`R/02_transform.R`: Es wandelt die Rohdateien ohne weitere Handgriffe in den fertigen Datensatz um, damit jeder
+mit denselben Rohdaten genau denselben Datensatz erzeugen kann. Schätze **keine** Modelle; es geht nur um die
+Daten.
 
 **Grundregeln**
 
@@ -43,10 +45,9 @@ ihre Spaltennamen weichen ab. Für diesen Auftrag gelten R und die Namen in dies
 
 ```
 R/
-├── 01_download.R             # Schritt 2
-├── 02_brfss.R                # Schritt 3
-├── 03_panel.R                # Schritte 4–5
-└── 04_checks.R               # Schritt 6
+├── 01_download.R             # Schritt 2: lädt die Rohdaten
+├── 02_transform.R            # Schritte 3–5 und 7: Rohdaten → fertiger Datensatz, Protokolle, Codebook
+└── 03_checks.R               # Schritt 6: Prüfungen
 data/
 ├── raw/                                     # unverändert, so wie heruntergeladen
 │   ├── brfss_2001.zip … brfss_2015.zip
@@ -61,13 +62,35 @@ data/
 │   ├── brfss_2001_2015_personen.rds         # Personendatensatz mit Originalnamen und -codes
 │   ├── panel_state_year_2001_2015.rds       # ← FERTIGER DATENSATZ (für R)
 │   ├── panel_state_year_2001_2015.csv       # derselbe Datensatz als CSV
-│   └── codebook.md                          # jede Spalte: Quelle, Konstruktion, Einheit
+│   └── codebook.md                          # Variablenverzeichnis, Transformationsprotokoll, Quellen
 └── logs/
     ├── download_log.csv                     # URL, Datei, Bytes, SHA-256, Zeitpunkt, Status
+    ├── transform_log.csv                    # Fallzahlen je Jahr und Transformationsschritt
+    ├── code_frequencies.csv                 # gefundene Codes je Quellvariable und Jahr
+    ├── join_log.csv                         # Treffer je Zusammenführung
     └── checks.md                            # Ergebnisse der Prüfungen aus Schritt 6
 ```
 
-Jedes Skript lässt sich mit `Rscript R/0x_….R` einzeln ausführen und liest nur Dateien aus früheren Schritten.
+Jedes Skript lässt sich aus dem Projektordner mit `Rscript R/0x_….R` einzeln ausführen und liest nur Dateien
+aus früheren Schritten.
+
+**Anforderungen an `R/02_transform.R`**
+
+- **Eigenständig:** liest nur `data/raw/`, schreibt nur nach `data/intermediate/`, `data/final/` und `data/logs/`,
+  braucht keinen Netzzugang. Liegen die Rohdaten vor, genügt `Rscript R/02_transform.R`.
+- **Kopfkommentar:** Zweck, Eingabedateien, Ausgabedateien, benötigte Pakete, ungefähre Laufzeit und
+  Arbeitsspeicher.
+- **Einstellungen oben im Skript:** Pfade, Jahre (2001–2015), Liste der FIPS-Codes, Zuordnung FIPS → Postkürzel.
+- **Eine Funktion je Schritt**, jeweils mit einem Kommentar, welchen Abschnitt dieser Anleitung sie umsetzt, z. B.
+  `read_brfss_year()` (3), `build_cells()` (4.1), `read_tax()` (4.2), `read_fred()` (4.3), `read_smokefree()`
+  (4.4), `add_real_values()` (4.5), `merge_panel()` (5), `write_codebook()` (7). Unten im Skript ruft ein kurzer
+  Hauptteil die Funktionen in dieser Reihenfolge auf.
+- **Reproduzierbar:** Rohdaten werden nie verändert; ein zweiter Lauf überschreibt die Ausgaben mit identischem
+  Inhalt. Teste das: Skript zweimal ausführen und die SHA-256 der Panel-CSV vergleichen; Ergebnis in
+  `data/logs/checks.md`.
+- **Keine fest eingetragenen Ergebnisse:** Was das Skript berechnen kann (Fallzahlen, gefundene Codes, Trefferquoten),
+  berechnet es. Fest eingetragen sind nur die Regeln dieser Anleitung.
+- Am Ende schreibt es `sessionInfo()` nach `data/logs/sessionInfo.txt`.
 
 ## 2 Downloads (`R/01_download.R`)
 
@@ -147,7 +170,7 @@ Sharbaugh et al. (2018), PLoS ONE, https://doi.org/10.1371/journal.pone.0204416.
 (Raucherquote je Staat und Jahr) und S3 (Steuer je Staat und Jahr) nach `data/raw/paper/` laden. Sie dienen
 nur dem Abgleich in Schritt 6.
 
-## 3 BRFSS einlesen (`R/02_brfss.R`)
+## 3 BRFSS einlesen (`R/02_transform.R`)
 
 Für jedes Jahr die XPT-Datei aus dem ZIP in ein temporäres Verzeichnis entpacken (der Dateiname im ZIP kann
 mit Leerzeichen enden), mit `haven::read_xpt(…, col_select = any_of(vars))` nur diese Originalvariablen lesen und
@@ -179,7 +202,7 @@ die XPT-Datei danach löschen:
   (`dplyr::bind_rows`, fehlende Variablen werden `NA`) und als `data/final/brfss_2001_2015_personen.rds`
   speichern. Dieser Personendatensatz enthält **alle** Datensätze, auch Territorien, ungefiltert.
 
-## 4 Staat-Jahr-Zellen und Kontrollen (`R/03_panel.R`, Teil 1)
+## 4 Staat-Jahr-Zellen und Kontrollen (`R/02_transform.R`)
 
 ### 4.1 Zellwerte aus dem Personendatensatz
 
@@ -190,6 +213,12 @@ die XPT-Datei danach löschen:
   54, 55, 56}; Territorien (66, 72, 78) fallen weg,
 - nur Befragte mit Altersangabe: `_AGEG5YR` zwischen 1 und 13 (14 = fehlend),
 - nur Gewicht > 0. Das Gewicht ist `_FINALWT` bis 2010 und `_LLCPWT` ab 2011.
+
+**Protokoll:** Für jedes Jahr die Zahl der Datensätze nach jedem Filter in `data/logs/transform_log.csv` schreiben
+(Spalten `FILE_YEAR`, `schritt`, `n_vorher`, `n_nachher`, `n_entfernt`): eingelesen, nach Staatenfilter, nach
+Altersfilter, nach Gewichtsfilter, mit gültigem Rauchstatus. Außerdem für jede verwendete Quellvariable die
+Häufigkeit jedes vorkommenden Codes je Jahr in `data/logs/code_frequencies.csv` (Spalten `FILE_YEAR`, `variable`,
+`code`, `n`). So fallen unerwartete Codes auf.
 
 **Hilfsgrößen** (nur für die Rechnung, nicht im Personendatensatz speichern):
 
@@ -247,7 +276,7 @@ In Dollar von 2015: `x_real2015 = x × CPIAUCSL(2015) / CPIAUCSL(Jahr)`. Neue Sp
 `state_tax_real2015`, `fedstate_tax_real2015`, `avg_price_real2015`, `PCPI_real2015` und
 `ln_PCPI_real2015` (natürlicher Logarithmus).
 
-## 5 Fertiger Datensatz (`R/03_panel.R`, Teil 2)
+## 5 Fertiger Datensatz (`R/02_transform.R`)
 
 - Basis sind die BRFSS-Zellen (Schlüssel `_STATE`, `FILE_YEAR`). In den Zellen `FILE_YEAR` in `Year` umbenennen
   (so heißt der Jahresschlüssel in der Steuerdatei) und mit einer Zuordnung FIPS → Postkürzel die Spalte
@@ -256,38 +285,55 @@ In Dollar von 2015: `x_real2015 = x × CPIAUCSL(2015) / CPIAUCSL(Jahr)`. Neue Sp
 - FRED über `LocationAbbr` und `Year`, die Rauchverbote über Kürzel und Jahr anhängen.
 - Nur Left Joins auf die BRFSS-Zellen; keine Zeilen hinzufügen oder entfernen. Erwartet: genau 765 Zeilen
   (51 × 15), sortiert nach `LocationAbbr`, `Year`.
+- Für jede Zusammenführung in `data/logs/join_log.csv` festhalten, wie viele der 765 Zeilen einen Treffer
+  hatten, und alle Schlüssel ohne Treffer auflisten.
 - Speichern als `data/final/panel_state_year_2001_2015.rds` (`saveRDS`) und als CSV (`readr::write_csv`, UTF-8,
   Komma als Trennzeichen, Punkt als Dezimalzeichen, leere Felder für `NA`).
-- `data/final/codebook.md` schreiben, mit allen Spalten aus der folgenden Tabelle plus etwaigen Zusätzen.
+- Das Codebook entsteht in Schritt 7 (`write_codebook()` in `R/02_transform.R`), nicht von Hand.
 
-**Codebook des fertigen Datensatzes**
+**Variablenverzeichnis des fertigen Datensatzes.** Diese Tabelle ist Teil A des Codebooks (Schritt 7). Die
+Transformationen gelten verbindlich; wer davon abweicht, ändert die Tabelle und protokolliert den Grund.
 
-| Spalte | Herkunft | Inhalt | Einheit |
-|---|---|---|---|
-| `_STATE` | BRFSS, Original | FIPS-Code des Staates | Zahl |
-| `LocationAbbr`, `LocationDesc` | Tax Burden, Original | Postkürzel und Name des Staates | Text |
-| `Year` | BRFSS-Dateijahr (`FILE_YEAR`), benannt wie der Jahresschlüssel der Steuerdatei | Jahr der Befragung bzw. der Steuerangabe | Jahr |
-| `State Tax per pack` | Tax Burden, Original (`Data_Value`) | staatliche Zigarettensteuer je Packung, nominal | $ |
-| `Federal and State Tax per pack` | Tax Burden, Original (`Data_Value`) | Bundes- plus Staatssteuer je Packung, nominal | $ |
-| `Average Cost per pack` | Tax Burden, Original (`Data_Value`) | Durchschnittspreis je Packung, nominal | $ |
-| `UR` | FRED `<ST>UR`, Jahresmittel | Arbeitslosenquote | Prozent |
-| `PCPI` | FRED `<ST>PCPI` | Pro-Kopf-Einkommen, nominal | $ |
-| `CPIAUCSL` | FRED, Jahresmittel | Verbraucherpreisindex | Index |
-| `prev` | neu, aus `_SMOKER2`/`_SMOKER3` und Gewicht | gewichteter Raucheranteil (abhängige Variable) | Anteil 0–1 |
-| `n` | neu | Befragte mit gültigem Rauchstatus | Anzahl |
-| `prev_age1824`, `prev_age2544`, `prev_age4564`, `prev_age65p` | neu, zusätzlich `_AGEG5YR` | Raucheranteil nach Alter | Anteil |
-| `prev_male`, `prev_female` | neu, zusätzlich `SEX` | Raucheranteil nach Geschlecht | Anteil |
-| `prev_inc_lt25k`, `prev_inc_25_50k`, `prev_inc_50_75k`, `prev_inc_ge75k` | neu, zusätzlich `INCOME2` | Raucheranteil nach Haushaltseinkommen | Anteil |
-| `prev_white_nh`, `prev_black_nh`, `prev_hisp` | neu, zusätzlich `_RACEGR2`/`_RACEGR3` | Raucheranteil nach Ethnie | Anteil |
-| `n_<code>` | neu | Zellgröße je Teilgruppe (gleiche Codes wie oben) | Anzahl |
-| `quit`, `n_quit` | neu, aus `STOPSMK2` | Anteil der Raucher mit Aufhörversuch; gültige Antworten | Anteil, Anzahl |
-| `sh_age1824`, `sh_age2544`, `sh_age4564`, `sh_female`, `sh_black`, `sh_hisp`, `sh_college`, `sh_lowinc` | neu, aus `_AGEG5YR`, `SEX`, `_RACEGR2/3`, `EDUCA`, `INCOME2` | Zusammensetzung der Stichprobe, gewichtet | Anteil |
-| `state_tax_real2015`, `fedstate_tax_real2015`, `avg_price_real2015` | neu | Steuern und Preis in Dollar von 2015 | $ |
-| `PCPI_real2015`, `ln_PCPI_real2015` | neu | reales Pro-Kopf-Einkommen; Logarithmus | $; log |
-| `smokefree_comprehensive` | neu, aus STATE System | Anteil des Jahres mit vollständigem Rauchverbot in Arbeitsstätten, Restaurants und Bars | Anteil |
-| `state_tax_calavg` | optional, neu | zeitgewichtete staatliche Steuer im Kalenderjahr | $ |
+Gemeinsame Begriffe:
+- **Zellstichprobe** = Befragte mit `_STATE` in den 50 Staaten und D.C., `_AGEG5YR` 1–13 und Gewicht > 0.
+- **Gewicht w** = `_FINALWT` für `Year` ≤ 2010, `_LLCPWT` für `Year` ≥ 2011.
+- **Raucher r** = 1, wenn `_SMOKER2` (2001–2004) bzw. `_SMOKER3` (2005–2015) 1 oder 2 ist; 0 bei 3 oder 4;
+  sonst `NA` (z. B. 9 = weiß nicht, verweigert).
+- **Gewichteter Anteil** einer 0/1-Variable x = Σ w·x / Σ w über alle Befragten der Zelle mit gültigem x.
 
-## 6 Prüfungen (`R/04_checks.R`)
+| Spalte | Quellvariable(n) | Transformation | Einheit | Fehlende Werte |
+|---|---|---|---|---|
+| `_STATE` | BRFSS `_STATE` | unverändert; nur 50 Staaten und D.C. | FIPS-Code | keine |
+| `LocationAbbr` | Zuordnungstabelle FIPS → Postkürzel im Skript | aus `_STATE` abgeleitet; gleiche Schreibweise wie `LocationAbbr` der Steuerdatei | Text | keine |
+| `LocationDesc` | Tax Burden `LocationDesc` | unverändert übernommen | Text | wenn Steuerdatei ohne Treffer |
+| `Year` | BRFSS-Dateijahr (`FILE_YEAR`) | umbenannt in `Year`; Schlüssel für Steuern, FRED und Rauchverbote | Jahr | keine |
+| `State Tax per pack` | Tax Burden `Data_Value` bei `SubMeasureDesc` = „State Tax per pack“ | `$` und Tausendertrennzeichen entfernt, in Zahl umgewandelt; sonst unverändert | $ nominal | wenn kein Eintrag |
+| `Federal and State Tax per pack` | wie oben, `SubMeasureDesc` = „Federal and State Tax per pack“ | wie oben | $ nominal | wenn kein Eintrag |
+| `Average Cost per pack` | wie oben, `SubMeasureDesc` = „Average Cost per pack“ | wie oben | $ nominal | wenn kein Eintrag |
+| `UR` | FRED `<LocationAbbr>UR`, monatlich | arithmetisches Mittel der 12 Monate des Kalenderjahres `Year` | Prozent | `NA`, wenn nicht alle 12 Monate vorliegen |
+| `PCPI` | FRED `<LocationAbbr>PCPI`, jährlich | Jahreswert für `Year`, unverändert | $ nominal | wenn kein Eintrag |
+| `CPIAUCSL` | FRED `CPIAUCSL`, monatlich | arithmetisches Mittel der 12 Monate von `Year` | Index 1982–84 = 100 | keine erwartet |
+| `prev` | `_SMOKER2`/`_SMOKER3`, Gewicht | gewichteter Anteil von r in der Zellstichprobe | Anteil 0–1 | keine erwartet |
+| `n` | wie oben | Zahl der Befragten der Zellstichprobe mit gültigem r, ungewichtet | Anzahl | keine |
+| `prev_age1824`, `prev_age2544`, `prev_age4564`, `prev_age65p` | zusätzlich `_AGEG5YR` | wie `prev`, nur `_AGEG5YR` = 1 bzw. 2–5 bzw. 6–9 bzw. 10–13 | Anteil | wenn Gruppe leer |
+| `prev_male`, `prev_female` | zusätzlich `SEX` | wie `prev`, nur `SEX` = 1 bzw. 2 | Anteil | wenn Gruppe leer |
+| `prev_inc_lt25k`, `prev_inc_25_50k`, `prev_inc_50_75k`, `prev_inc_ge75k` | zusätzlich `INCOME2` | wie `prev`, nur `INCOME2` = 1–4 bzw. 5–6 bzw. 7 bzw. 8; Codes 77, 99 und fehlend gehören zu keiner Gruppe | Anteil | wenn Gruppe leer |
+| `prev_white_nh`, `prev_black_nh`, `prev_hisp` | zusätzlich `_RACEGR2` (bis 2012) bzw. `_RACEGR3` (ab 2013) | wie `prev`, nur Code 1 bzw. 2 bzw. 5 | Anteil | wenn Gruppe leer |
+| `n_<code>` | wie die jeweilige Gruppe | Zahl der Befragten der Gruppe mit gültigem r | Anzahl | keine (0 bei leerer Gruppe) |
+| `quit` | `STOPSMK2` | nur Befragte mit r = 1; q = 1 bei `STOPSMK2` = 1, 0 bei 2, sonst `NA`; gewichteter Anteil von q | Anteil | wenn keine gültige Antwort |
+| `n_quit` | wie oben | Zahl der Raucher mit gültigem q | Anzahl | keine |
+| `sh_age1824`, `sh_age2544`, `sh_age4564` | `_AGEG5YR` | gewichteter Anteil von `_AGEG5YR` = 1 bzw. 2–5 bzw. 6–9 an der Zellstichprobe mit gültigem r | Anteil | keine erwartet |
+| `sh_female` | `SEX` | gewichteter Anteil von `SEX` = 2 | Anteil | keine erwartet |
+| `sh_black`, `sh_hisp` | `_RACEGR2`/`_RACEGR3` | gewichteter Anteil von Code 2 bzw. 5 | Anteil | keine erwartet |
+| `sh_college` | `EDUCA` | 1 bei `EDUCA` = 6, 0 bei 1–5, sonst `NA`; gewichteter Anteil der gültigen Werte | Anteil | keine erwartet |
+| `sh_lowinc` | `INCOME2` | 1 bei `INCOME2` 1–4, 0 bei 5–8, sonst `NA`; gewichteter Anteil der gültigen Werte | Anteil | keine erwartet |
+| `state_tax_real2015`, `fedstate_tax_real2015`, `avg_price_real2015` | Steuer- bzw. Preisspalte, `CPIAUCSL` | x × `CPIAUCSL`(2015) / `CPIAUCSL`(`Year`) | $ von 2015 | wenn x fehlt |
+| `PCPI_real2015` | `PCPI`, `CPIAUCSL` | wie oben | $ von 2015 | wenn `PCPI` fehlt |
+| `ln_PCPI_real2015` | `PCPI_real2015` | natürlicher Logarithmus | log $ | wenn `PCPI` fehlt |
+| `smokefree_comprehensive` | STATE System, Smokefree Indoor Air | je Quartal 1, wenn private Arbeitsstätten, Restaurants und Bars vollständig rauchfrei sind, sonst 0; Mittel über die Quartale von `Year`. Welche Spalten und Textwerte als „vollständig rauchfrei“ zählen, steht in Teil B | Anteil 0–1 | wenn kein Quartal vorliegt |
+| `state_tax_calavg` (optional) | STATE System, Tobacco Legislation – Tax | Steuersatz je Tag aus Wirksamkeitsdaten, gemittelt über das Kalenderjahr `Year` | $ nominal | wenn nicht berechnet |
+
+## 6 Prüfungen (`R/03_checks.R`)
 
 Alle Ergebnisse mit Zahlen in `data/logs/checks.md` schreiben. Eine fehlgeschlagene Prüfung nicht
 „reparieren“, sondern Ursache suchen und berichten.
@@ -306,21 +352,61 @@ Alle Ergebnisse mit Zahlen in `data/logs/checks.md` schreiben. Eine fehlgeschlag
 6. **Datensatzzahlen** je Jahr im Personendatensatz mit der Tabelle in 2.1 vergleichen.
 7. **Methodenbruch 2011:** Mittelwert von `prev` je Jahr ausgeben. Ein Sprung 2010/2011 ist erwartbar
    (Mobiltelefone, Raking), nur dokumentieren.
-8. **Falls S2/S3 des Papers vorliegen:** je Staat und Jahr Differenz zu `prev` und `State Tax per pack`;
+8. **Protokolle vollständig:** `transform_log.csv` hat für jedes Jahr alle fünf Schritte;
+   `code_frequencies.csv` enthält keine Codes, die in Abschnitt 4.1 nicht vorkommen, oder sie sind in `checks.md`
+   erklärt; `join_log.csv` zeigt für die Steuerdaten 765 Treffer.
+9. **Falls S2/S3 des Papers vorliegen:** je Staat und Jahr Differenz zu `prev` und `State Tax per pack`;
    Korrelation, mittlere und größte absolute Abweichung berichten.
 
-## 7 Ausgabe und Bericht
+## 7 Codebook (`R/02_transform.R`, letzter Schritt)
+
+`write_codebook()` erzeugt `data/final/codebook.md` aus den Regeln dieser Anleitung und den Protokollen. Zahlen kommen
+immer aus den Protokolldateien, nie von Hand. Wird ein Schritt geändert und neu ausgeführt, entsteht ein neues
+Codebook. Das Codebook hat drei Teile:
+
+**Teil A: Variablenverzeichnis.** Die Tabelle aus Schritt 5, ergänzt um je Spalte Minimum, Maximum, Mittelwert
+und Zahl fehlender Werte im fertigen Datensatz. Für den Personendatensatz genügt eine kurze Liste: die
+Originalvariablen aus Abschnitt 3 mit Verweis auf das BRFSS-Codebook des jeweiligen Jahres, dazu die einzige neue
+Spalte `FILE_YEAR`.
+
+**Teil B: Transformationsprotokoll**, in dieser Reihenfolge:
+
+1. *Einlesen:* je Jahr Datei, Quelle (CDC oder Archiv), Zahl der Datensätze und welche der Variablen aus
+   Abschnitt 3 fehlten.
+2. *Filter:* Tabelle Jahr × Schritt mit den Fallzahlen aus `transform_log.csv` (eingelesen → Staaten → Alter →
+   Gewicht → gültiger Rauchstatus).
+3. *Umkodierungen:* die Regeln aus Abschnitt 4.1 als Tabelle „Quellvariable, Code, neuer Wert“, dazu die
+   tatsächlich gefundenen Codes aus `code_frequencies.csv` und wie unerwartete Codes behandelt wurden.
+4. *Aggregation:* die Formel für gewichtete Anteile und welche Befragten jeweils in Zähler und Nenner eingehen.
+5. *Steuerdaten:* alle gefundenen `SubMeasureDesc`-Werte, welche verwendet wurden, die Bereinigung von
+   `Data_Value` und worauf sich `Year` in der Steuerdatei bezieht.
+6. *FRED:* verwendete Reihen, Abweichungen von den Namensmustern, Jahre mit unvollständigen Monaten.
+7. *Rauchverbote:* verwendete Datensatz-ID, die Spalten und die exakten Textwerte, die als „vollständig
+   rauchfrei“ gezählt wurden.
+8. *Reale Werte:* der verwendete Wert von `CPIAUCSL` für 2015.
+9. *Zusammenführung:* Treffer je Join aus `join_log.csv` und alle Schlüssel ohne Treffer.
+10. *Abweichungen und offene Punkte:* jede Abweichung von dieser Anleitung mit Begründung.
+
+**Teil C: Quellen.** Je Rohdatei Datensatzname, URL, Abrufdatum, Dateigröße und SHA-256 aus
+`download_log.csv`, dazu das „Zuletzt aktualisiert“-Datum der Quelle, soweit angegeben.
+
+## 8 Ausgabe und Bericht
 
 Am Ende müssen diese Dateien existieren:
 
-- `R/01_download.R` bis `R/04_checks.R`
+- `R/01_download.R`, `R/02_transform.R`, `R/03_checks.R`
 - `data/raw/…` (alle Rohdateien), `data/logs/download_log.csv`
 - `data/final/brfss_2001_2015_personen.rds`
 - `data/final/panel_state_year_2001_2015.rds` und `.csv` (der fertige Datensatz)
-- `data/final/codebook.md`, `data/logs/checks.md`
+- `data/final/codebook.md`, `data/logs/checks.md` und die übrigen Protokolle in `data/logs/`
 
-Den fertigen Datensatz (`panel_state_year_2001_2015.rds` und `.csv`) zusätzlich als eigene Dateien an den Nutzer
-ausgeben. Im Abschlussbericht stehen:
+Diese Dateien zusätzlich als eigene Dateien an den Nutzer ausgeben:
+
+- `R/02_transform.R` (das Transformationsskript von den Rohdaten zum fertigen Datensatz),
+- `data/final/panel_state_year_2001_2015.rds` und `.csv` (der fertige Datensatz),
+- `data/final/codebook.md`.
+
+Im Abschlussbericht stehen:
 
 - welche Quellen geladen wurden und welche Ausweichquellen nötig waren,
 - die Ergebnisse der Prüfungen aus Schritt 6 in Kurzform,
